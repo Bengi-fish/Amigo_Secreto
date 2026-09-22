@@ -1,0 +1,68 @@
+CREATE TABLE IF NOT EXISTS game (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  locked BOOLEAN NOT NULL DEFAULT FALSE
+);
+INSERT INTO game (id) VALUES (1) ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS users (
+  id UUID PRIMARY KEY,
+  username TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('admin','participant')),
+  must_change_password BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE TABLE IF NOT EXISTS assignments (
+  giver_id UUID PRIMARY KEY REFERENCES users(id),
+  recipient_id UUID UNIQUE NOT NULL REFERENCES users(id),
+  CHECK (giver_id <> recipient_id)
+);
+CREATE TABLE IF NOT EXISTS reveals (
+  user_id UUID PRIMARY KEY REFERENCES users(id),
+  revealed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS rate_limits (
+  key TEXT PRIMARY KEY,
+  hits INTEGER NOT NULL,
+  resets_at TIMESTAMPTZ NOT NULL
+);
+CREATE OR REPLACE FUNCTION immutable_assignments() RETURNS TRIGGER AS $$
+BEGIN
+  RAISE EXCEPTION 'Las asignaciones son permanentes';
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS assignments_immutable ON assignments;
+CREATE TRIGGER assignments_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON assignments
+FOR EACH STATEMENT EXECUTE FUNCTION immutable_assignments();
+CREATE OR REPLACE FUNCTION protect_roster() RETURNS TRIGGER AS $$
+DECLARE is_locked BOOLEAN;
+BEGIN
+  SELECT locked INTO is_locked FROM game WHERE id=1 FOR UPDATE;
+  IF is_locked THEN
+    IF TG_OP IN ('INSERT','DELETE') THEN RAISE EXCEPTION 'La lista está cerrada'; END IF;
+    IF NEW.id IS DISTINCT FROM OLD.id OR NEW.name IS DISTINCT FROM OLD.name OR NEW.username IS DISTINCT FROM OLD.username OR NEW.role IS DISTINCT FROM OLD.role THEN
+      RAISE EXCEPTION 'La lista está cerrada';
+    END IF;
+  END IF;
+  IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS roster_frozen ON users;
+CREATE TRIGGER roster_frozen BEFORE INSERT OR UPDATE OR DELETE ON users
+FOR EACH ROW EXECUTE FUNCTION protect_roster();
+CREATE OR REPLACE FUNCTION protect_game() RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN RAISE EXCEPTION 'El juego no se puede eliminar'; END IF;
+  IF OLD.locked AND NOT NEW.locked THEN RAISE EXCEPTION 'El sorteo es permanente'; END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS game_permanent ON game;
+CREATE TRIGGER game_permanent BEFORE UPDATE OR DELETE ON game
+FOR EACH ROW EXECUTE FUNCTION protect_game();

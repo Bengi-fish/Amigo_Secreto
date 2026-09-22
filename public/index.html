@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#214a3d">
+  <meta name="description" content="Un regalo, una persona y un secreto que solo tú conoces. Entra a tu intercambio de amigo secreto.">
+  <title>Entre nosotros · Amigo secreto</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="/" aria-label="Entre nosotros, inicio"><span class="brand-mark">✳</span> entre nosotros<span class="brand-period">.</span></a><span class="header-note">UN JUEGO PARA COMPARTIR</span><button class="quiet hidden" id="logout">Cerrar sesión ↗</button></header>
+  <main id="app" aria-live="polite"><div class="loading">Preparando tu lugar…</div></main>
+  <footer><span>Hecho para regalar sonrisas.</span><span class="footer-secret">Un poquito de misterio. Mucho cariño. <span>✳</span></span></footer>
+  <dialog id="account-dialog"><form id="account-form"><div class="dialog-heading"><h2 id="dialog-title">Nuevo participante</h2><button type="button" class="icon-button" id="close-dialog" aria-label="Cerrar">×</button></div><input type="hidden" name="id"><label>Nombre completo<input name="name" required minlength="2" maxlength="80" autocomplete="name"></label><label>Usuario<input name="username" required minlength="3" maxlength="40" pattern="[a-z0-9_.\-]{3,40}" autocomplete="off"></label><label><span id="password-label">Contraseña inicial</span><input name="password" type="password" minlength="12" maxlength="128" autocomplete="new-password"></label><p class="hint" id="account-hint">Mínimo 12 caracteres. Entrégala de forma privada.</p><p class="error" id="dialog-error" role="alert"></p><button class="primary" type="submit">Guardar participante <span>↗</span></button></form></dialog>
+</body>
+</html>

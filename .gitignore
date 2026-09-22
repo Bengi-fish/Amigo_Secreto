@@ -1,0 +1,12 @@
+node_modules/
+.pnpm-store/
+dist/
+.env
+.env.*
+!.env.example
+credentials*.txt
+.local-db/
+test-results/
+
+# Configuración local de herramientas (rutas de esta máquina).
+.claude/

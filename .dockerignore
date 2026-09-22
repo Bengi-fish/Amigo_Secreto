@@ -1,0 +1,8 @@
+node_modules
+.pnpm-store
+.git
+.env*
+credentials*.txt
+.local-db
+test-results
+dist
