@@ -12,7 +12,7 @@ pnpm setup:local
 pnpm dev
 ```
 
-En esta máquina Node.js está instalado como copia portátil en `%LOCALAPPDATA%\node-portable\node-v24.21.0-win-x64` y no está en el `PATH`, así que `node` y `pnpm` no funcionan en una terminal normal. Usa el atajo `dev.cmd`, que encuentra esa copia por su cuenta (doble clic o desde la terminal):
+En esta máquina Node.js está instalado como copia portátil en `%LOCALAPPDATA%\node-portable\node-v24.21.0-win-x64`, ya añadida al `PATH` de tu usuario (abre una terminal nueva para que `node` y `pnpm` funcionen). También puedes usar el atajo `dev.cmd`, que encuentra esa copia por su cuenta (doble clic o desde la terminal):
 
 ```bat
 dev.cmd          :: inicia el servidor en http://localhost:3000
@@ -21,8 +21,6 @@ dev.cmd build    :: genera dist/
 dev.cmd seed     :: crea las cuentas (solo la primera vez)
 ```
 
-Si prefieres usar `pnpm` directamente, añade esa carpeta al `PATH` de tu usuario en Windows; entonces funcionan los comandos `pnpm` de arriba.
-
 Abre http://localhost:3000. `setup:local` crea `.env`, una base PostgreSQL embebida en `.local-db/` y un archivo privado `credentials-<fecha>.txt` con un administrador y seis participantes (`persona1` a `persona6`). La configuración local ya fue creada durante la implementación; en esta carpeta basta ejecutar `dev.cmd` si el servidor no está activo. No ejecutes dos procesos sobre la misma base embebida.
 
 Las contraseñas se generan al azar; no hay una contraseña universal. El seed no sobrescribe cuentas existentes. El archivo de credenciales, `.env` y los datos locales están excluidos de Git y de la imagen Docker. Elimina el archivo de credenciales después de entregarlas de forma privada.
@@ -30,10 +28,10 @@ Las contraseñas se generan al azar; no hay una contraseña universal. El seed n
 ## Cómo se juega
 
 1. Entra como administrador. Edita nombres/usuarios, añade o quita participantes y establece contraseñas iniciales. El administrador no participa; si quieres jugar, usa una cuenta de participante separada.
-2. Entrega a cada persona su cuenta. Cada participante debe cambiar la contraseña inicial por una propia. Es obligatorio que todos estén listos y haya al menos **3 participantes**; máximo 200.
-3. La primera persona que pulsa **Descubrir mi amigo secreto** cierra la lista. El servidor genera el sorteo completo en una transacción. Nadie se obtiene a sí mismo y cada destinatario aparece exactamente una vez. Se permiten parejas recíprocas.
-4. La animación muestra números aleatorios decorativos. El sorteo real utiliza aleatoriedad criptográfica en el servidor; no se envían nombres de otras asignaciones al navegador.
-5. Cada persona ve solo su resultado. Recargar, entrar otra vez, hacer doble clic o participar simultáneamente conserva la asignación.
+2. Entrega a cada persona su cuenta. Cada participante debe cambiar la contraseña inicial por una propia; en ese momento se crea su llave de cifrado. Una persona está **lista** cuando tiene contraseña propia y llave. Quien cambió su contraseña antes de que existiera el cifrado aparece como **Debe volver a entrar**: basta con que inicie sesión una vez. Hacen falta al menos **3 participantes**; máximo 200.
+3. Cuando todos están listos, el organizador pulsa **Iniciar sorteo** en el panel. Antes de eso nadie puede descubrir nada. El servidor genera el sorteo completo en una transacción, una sola vez, y cierra la lista. Nadie se obtiene a sí mismo y cada destinatario aparece exactamente una vez. Se permiten parejas recíprocas.
+4. Cada participante pulsa **Descubrir mi amigo secreto**. La animación muestra números aleatorios decorativos. El sorteo real utiliza aleatoriedad criptográfica en el servidor; no se envían nombres de otras asignaciones al navegador.
+5. Cada persona ve solo su resultado. Recargar, entrar otra vez, hacer doble clic o cambiar su contraseña conserva la asignación.
 
 Al cerrar la lista, el panel bloquea altas, bajas, nombres, usuarios y restablecimiento de contraseñas. Esto evita que el administrador cambie una cuenta para suplantar a su propietario. Los participantes pueden cambiar su propia contraseña conociendo la actual. No existe reinicio, repetición del sorteo ni recuperación administrativa después del sorteo; conserva tu contraseña.
 
@@ -72,7 +70,7 @@ Al terminar, **desactiva Public Access** en ese servicio y borra `.env.productio
 
 Referencias oficiales: [reescrituras hacia orígenes externos de Vercel](https://vercel.com/docs/routing/rewrites), [Express en Railway](https://docs.railway.com/guides/express), [PostgreSQL en Railway](https://docs.railway.com/databases/postgresql).
 
-**Estado de entrega:** aplicación implementada y comprobada en local (pruebas y recorrido completo de la interfaz: login, cambio de contraseña, sorteo con animación, resultado permanente y panel del organizador con la lista cerrada). No se ha publicado en Vercel/Railway. Falta, en este orden: publicar el repositorio en GitHub, crear el servicio de Railway con PostgreSQL, poner su dominio en `vercel.json`, importar el proyecto en Vercel y ejecutar el seed de producción.
+**Estado de entrega:** publicada. Frontend en https://amigo-secreto-chi-tan.vercel.app (Vercel, conectado a GitHub: cada push a `main` se despliega solo), backend y PostgreSQL en Railway, cuentas de producción creadas.
 
 ## Seguridad y alcance de la privacidad
 
@@ -81,10 +79,13 @@ Referencias oficiales: [reescrituras hacia orígenes externos de Vercel](https:/
 - Sesiones opacas aleatorias; solo su hash se almacena en PostgreSQL. Cookies HttpOnly, SameSite=Lax, Secure en producción y expiración a 8 horas. Cambiar contraseña invalida sesiones anteriores.
 - Comprobación de origen y Content-Type en operaciones de escritura, límite de tamaño de peticiones, validación de datos, CSP y cabeceras de seguridad.
 - Límite persistente de intentos por usuario y global, compartido entre réplicas. No confía en cabeceras IP manipulables.
-- Transacción con bloqueo de la fila del juego que serializa el primer sorteo y los cambios de cuentas. Restricciones UNIQUE/CHECK y triggers que impiden actualizar, borrar o truncar las asignaciones y reabrir el juego.
+- Transacción con bloqueo de la fila del juego que serializa el sorteo y los cambios de cuentas. El sorteo solo lo inicia el administrador y solo una vez. Triggers que impiden actualizar, borrar o truncar las asignaciones, cambiar las llaves públicas y reabrir el juego.
 - La API administrativa no consulta ni devuelve asignaciones. Los endpoints de revelación obtienen siempre el participante desde la sesión, nunca desde un ID enviado por el cliente.
+- **Asignaciones cifradas.** Cada participante tiene un par de llaves X25519. Su llave privada solo se guarda cifrada (AES-256-GCM) con una clave derivada con scrypt de su contraseña **personal**, nunca de la inicial que conoce el organizador, y, por sesión, con el token de la cookie, que la base no guarda. Cada asignación se cifra con la llave pública de quien regala. La tabla `assignments` solo contiene `giver_id` y texto cifrado. Si el organizador restablece una contraseña, se descartan las llaves de esa persona.
 
-La privacidad se garantiza frente a las funciones del **panel administrativo**, no frente al propietario de la infraestructura. Quien tenga acceso directo al servidor, al código, a la base de datos o a sus copias puede inspeccionar datos o retirar protecciones. No es criptografía de extremo a extremo. Tampoco es posible demostrar quién es una persona únicamente mediante una cuenta inicialmente creada por el organizador: entrega las credenciales al participante correcto y deja que cambie su contraseña antes del sorteo. Con tres participantes, algunos resultados pueden deducirse matemáticamente.
+**Qué protege el cifrado.** Leer la base de datos (la pestaña de datos de Railway, una copia de seguridad o la contraseña de PostgreSQL) no revela quién le tocó a quién, ni al organizador ni a nadie. Solo cada participante, con su contraseña o su sesión abierta, descifra su propia asignación.
+
+**Qué no protege.** Quien pueda **modificar el código** que corre en Railway (acceso a GitHub o a Railway) podría capturar el resultado en el momento del sorteo o cuando alguien lo descubre. Quien tenga la base de datos también podría intentar adivinar contraseñas débiles por fuerza bruta; scrypt lo encarece, pero usa contraseñas largas. Tampoco es posible demostrar quién es una persona únicamente mediante una cuenta creada por el organizador: entrega las credenciales al participante correcto y deja que cambie su contraseña. Con tres participantes, quien sabe a quién le regala puede deducir el sorteo completo.
 
 Activa copias de seguridad de PostgreSQL y conserva la base de datos; el estado permanente depende de ella. No ejecutes pruebas ni sorteos de demostración contra la base de producción.
 
@@ -95,9 +96,9 @@ dev.cmd test
 dev.cmd build
 ```
 
-O `pnpm test` y `pnpm build` si tienes Node en el `PATH`. Las nueve pruebas pasan en esta carpeta (Node 24.21.0). Para revisar la interfaz sin tocar la base local, `node scripts/preview-test.js` levanta una copia desechable en memoria en http://127.0.0.1:3001.
+O `pnpm test` y `pnpm build` si tienes Node en el `PATH`. Las doce pruebas pasan en esta carpeta (Node 24.21.0). Para revisar la interfaz sin tocar la base local, `node scripts/preview-test.js` levanta una copia desechable en memoria en http://127.0.0.1:3001.
 
-Las pruebas usan PostgreSQL embebido aislado (PGlite), sin modificar datos locales ni producción: autenticación, inyección SQL, origen, permisos, cambio de contraseña, revocación de sesiones, altas/bajas/edición, sorteo simultáneo e idempotente, unicidad, bloqueo de modificaciones en API y base de datos, límite de intentos y cierre de sesión. La integración con las instancias reales de Vercel/Railway debe comprobarse después del despliegue.
+Las pruebas usan PostgreSQL embebido aislado (PGlite), sin modificar datos locales ni producción: autenticación, inyección SQL, origen, permisos, cambio de contraseña, revocación de sesiones, altas/bajas/edición, sorteo iniciado solo por el administrador y una sola vez, unicidad, cifrado (la contraseña inicial y lo guardado en la base no descifran nada), cuentas antiguas sin llave, bloqueo de modificaciones en API y base de datos, límite de intentos y cierre de sesión. La integración con las instancias reales de Vercel/Railway debe comprobarse después del despliegue.
 
 Se incluye opcionalmente la herramienta WebMCP `reveal_my_secret_friend` en navegadores compatibles. Usa el mismo flujo visible y permisos que el botón; no omite la autenticación. Su registro se comprobó en el navegador, pero la revisión automática bloqueó la llamada de comprobación desde una sesión administrativa por considerarla una posible mutación irreversible. La validación de invocación WebMCP queda pendiente; la denegación al administrador sí se verificó directamente en las pruebas de la API.
 
