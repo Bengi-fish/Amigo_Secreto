@@ -1,4 +1,4 @@
-# Entre nosotros · Amigo secreto
+# ¿Quién será? · Amigo secreto
 
 Aplicación en español con frontend estático para **Vercel**, API Node.js/Express para **Railway** y **PostgreSQL**. Sin datos simulados en el flujo de producción.
 
