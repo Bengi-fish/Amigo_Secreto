@@ -147,6 +147,55 @@ test('database rejects changing/deleting assignments, roster identity, keys and 
   await assert.rejects(pool.query('UPDATE users SET public_key=NULL WHERE id=$1', [ids[1]]));
   assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM assignments')).rows[0].n, 6);
 });
+test('preferences work on an existing draw and migration preserves all results', async () => {
+  const assignments = (await pool.query('SELECT * FROM assignments ORDER BY giver_id')).rows;
+  const reveals = (await pool.query('SELECT * FROM reveals ORDER BY user_id')).rows;
+  // Simulate upgrading a drawn database that did not have the new preferences table.
+  await pool.query('DROP TABLE participant_preferences');
+  await migrate(pool);
+  const cookie = sessions.persona1;
+  const empty = await request('/preferences', { cookie });
+  assert.equal(empty.status, 200);
+  assert.equal(empty.data.participants.length, 6);
+  assert.ok(empty.data.participants.every(p => !p.sweets.length && !p.gifts.length));
+  assert.deepEqual(Object.keys(empty.data.participants[0]).sort(), ['gifts', 'id', 'name', 'sweets', 'username']);
+  const data = { sweets: [' Café Juan Valdés ', 'Chocolatina'], gifts: ['Carro de control remoto', 'Libro'] };
+  assert.equal((await request('/preferences', { method: 'PUT', cookie, data })).status, 200);
+  await migrate(pool);
+  const list = await request('/preferences', { cookie: sessions.persona3 });
+  const own = list.data.participants.find(p => p.id === ids[1]);
+  assert.deepEqual(own.sweets, ['Café Juan Valdés', 'Chocolatina']);
+  assert.deepEqual(own.gifts, data.gifts);
+  assert.equal((await request('/preferences', { cookie: sessions.admin })).status, 200);
+  assert.equal((await request('/preferences', { method: 'PUT', cookie, data: { sweets: [], gifts: [] } })).status, 200);
+  const cleared = (await request('/preferences', { cookie })).data.participants.find(p => p.id === ids[1]);
+  assert.deepEqual(cleared.sweets, []); assert.deepEqual(cleared.gifts, []);
+  assert.deepEqual((await pool.query('SELECT * FROM assignments ORDER BY giver_id')).rows, assignments);
+  assert.deepEqual((await pool.query('SELECT * FROM reveals ORDER BY user_id')).rows, reveals);
+  assert.equal((await request('/me', { cookie })).data.recipient, revealed[1]);
+  assert.equal((await pool.query('SELECT locked FROM game WHERE id=1')).rows[0].locked, true);
+});
+
+test('preferences enforce ownership, authentication, origin and input limits', async () => {
+  const cookie = sessions.persona1;
+  const data = { sweets: ['Chocolate'], gifts: ['Libro'] };
+  assert.equal((await request('/preferences')).status, 401);
+  assert.equal((await request('/preferences', { method: 'PUT', data })).status, 401);
+  assert.equal((await request('/preferences', { method: 'PUT', cookie: sessions.admin, data })).status, 403);
+  assert.equal((await request('/preferences', { method: 'PUT', cookie, data, source: 'https://evil.example' })).status, 403);
+  for (const invalid of [null, {}, { ...data, userId: ids[2] }, { ...data, gifts: 'Libro' }, { ...data, sweets: [null] }, { ...data, sweets: ['   '] }, { ...data, gifts: ['x'.repeat(121)] }, { ...data, gifts: Array(11).fill('Libro') }]) {
+    assert.equal((await request('/preferences', { method: 'PUT', cookie, data: invalid })).status, 400);
+  }
+  await pool.query('UPDATE users SET must_change_password=TRUE WHERE id=$1', [ids[3]]);
+  try {
+    assert.equal((await request('/preferences', { cookie: sessions.persona3 })).status, 403);
+    assert.equal((await request('/preferences', { method: 'PUT', cookie: sessions.persona3, data })).status, 403);
+  } finally { await pool.query('UPDATE users SET must_change_password=FALSE WHERE id=$1', [ids[3]]); }
+  assert.equal((await request('/preferences', { method: 'PUT', cookie, data: { sweets: Array(10).fill('x'.repeat(120)), gifts: Array(10).fill('Regalo') } })).status, 200);
+  const other = (await request('/preferences', { cookie })).data.participants.find(p => p.id === ids[2]);
+  assert.deepEqual(other.sweets, []); assert.deepEqual(other.gifts, []);
+});
+
 test('login throttling and logout', async () => {
   let response;
   for (let i = 0; i < 11; i++) response = await request('/login', { method: 'POST', data: { username: 'nonexistent', password: 'wrong' } });

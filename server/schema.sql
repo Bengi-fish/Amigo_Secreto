@@ -21,6 +21,13 @@ CREATE TABLE IF NOT EXISTS sessions (
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   expires_at TIMESTAMPTZ NOT NULL
 );
+-- Preferences remain editable after the draw without changing the frozen roster or assignments.
+CREATE TABLE IF NOT EXISTS participant_preferences (
+  user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  sweets TEXT[] NOT NULL DEFAULT '{}',
+  gifts TEXT[] NOT NULL DEFAULT '{}',
+  CHECK (cardinality(sweets) <= 10 AND cardinality(gifts) <= 10)
+);
 -- Private key encrypted with the raw session token, which only the browser cookie holds.
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS key_box TEXT;
 -- The first version stored recipient_id in clear. Replace that table only while it is empty;

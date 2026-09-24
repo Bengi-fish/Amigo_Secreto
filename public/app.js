@@ -61,6 +61,80 @@ function renderGame() {
   document.querySelector('#reveal')?.addEventListener('click', () => reveal().catch(() => {}));
   document.querySelector('#check-ready')?.addEventListener('click', () => refresh().catch(showPageError));
   document.querySelector('#change-password').onclick = () => renderPassword(true);
+  addPreferencesEntry(document.querySelector('#change-password'));
+}
+function addPreferencesEntry(before) {
+  const section = document.createElement('section');
+  section.className = 'preferences-entry';
+  section.innerHTML = `<h2>Dulces y regalos</h2><p>Cuéntale al grupo qué te gusta y encuentra ideas para sorprender.</p><button type="button" class="primary" id="open-preferences"><span aria-hidden="true">▦</span> Ver tabla de preferencias</button>`;
+  before.before(section);
+  section.querySelector('button').onclick = async event => {
+    const button = event.currentTarget;
+    if (revealing) return;
+    button.disabled = true;
+    try { const result = await api('/preferences'); if (section.isConnected && !revealing) renderPreferences(result.participants); }
+    catch (error) { showPageError(error); }
+    finally { button.disabled = false; }
+  };
+}
+function renderPreferences(participants) {
+  const own = participants.find(person => person.id === state.user.id);
+  const group = (key, title) => `<fieldset><legend>${title}</legend><div id="${key}-inputs"></div><button type="button" class="quiet" data-add="${key}">+ Agregar ${key === 'sweets' ? 'dulce' : 'regalo'}</button></fieldset>`;
+  root.innerHTML = `<section class="admin-page preferences-page"><button type="button" class="quiet" id="preferences-back">← Volver al ${state.user.role === 'admin' ? 'panel' : 'juego'}</button><div class="eyebrow">IDEAS PARA SORPRENDER</div><h1>Dulces y regalos</h1><p>Estas preferencias las pueden consultar todos los participantes y el organizador.</p>${own ? `<form id="preferences-form" class="preferences-editor"><h2>Mis preferencias</h2><p class="hint">Agrega hasta 10 dulces y 10 regalos. Máximo 120 caracteres por opción. Puedes cambiarlos incluso después del sorteo.</p><div class="preferences-fields">${group('sweets', 'Dulces que me gustan')}${group('gifts', 'Regalos que me gustaría recibir')}</div><p class="error" role="alert"></p><p id="preferences-saved" role="status"></p><button type="submit" class="primary">Guardar mis preferencias</button></form>` : ''}<div class="preferences-table-heading"><h2>Preferencias del grupo</h2><button type="button" class="quiet" id="refresh-preferences">Actualizar tabla ↻</button></div><p class="error" id="preferences-error" role="alert"></p><div class="table-wrap" tabindex="0" role="region" aria-label="Preferencias de todos los participantes"><table class="preferences-table"><caption>Dulces y regalos de cada participante</caption><thead><tr><th scope="col">Participante</th><th scope="col">Dulces preferidos</th><th scope="col">Regalos deseados</th></tr></thead><tbody id="preferences-rows"></tbody></table></div></section>`;
+  const page = root.firstElementChild;
+  const rows = page.querySelector('#preferences-rows');
+  const renderRows = () => {
+    const cell = values => values.length ? `<ul>${values.map(value => `<li>${escapeHtml(value)}</li>`).join('')}</ul>` : '<span class="hint">Sin preferencias todavía</span>';
+    rows.innerHTML = participants.map(person => `<tr${person.id === state.user.id ? ' class="own-preferences"' : ''}><th scope="row">${escapeHtml(person.name)}${person.id === state.user.id ? ' (tú)' : ''}<small>@${escapeHtml(person.username)}</small></th><td>${cell(person.sweets)}</td><td>${cell(person.gifts)}</td></tr>`).join('') || '<tr><td colspan="3">Todavía no hay participantes.</td></tr>';
+  };
+  renderRows();
+  page.querySelector('#preferences-back').onclick = () => refresh().catch(showPageError);
+  page.querySelector('#refresh-preferences').onclick = async event => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    page.querySelector('#preferences-error').textContent = '';
+    try { const result = await api('/preferences'); if (page.isConnected) { participants = result.participants; renderRows(); } }
+    catch (error) { if (page.isConnected) showPageError(error); }
+    finally { button.disabled = false; }
+  };
+  if (!own) return;
+  const form = page.querySelector('#preferences-form');
+  const saved = form.querySelector('#preferences-saved');
+  function addInput(key, value = '', focus = false) {
+    const container = form.querySelector(`#${key}-inputs`);
+    const add = form.querySelector(`[data-add="${key}"]`);
+    if (container.children.length >= 10) return;
+    const row = document.createElement('div');
+    row.className = 'preference-input';
+    row.innerHTML = `<label>${key === 'sweets' ? 'Dulce' : 'Regalo'}<input name="${key}" maxlength="120" placeholder="${key === 'sweets' ? 'Ej. Chocolatina' : 'Ej. Carro de control remoto'}"></label><button type="button" class="row-action danger" aria-label="Quitar ${key === 'sweets' ? 'dulce' : 'regalo'}">Quitar</button>`;
+    row.querySelector('input').value = value;
+    row.querySelector('button').onclick = () => { row.remove(); add.disabled = false; saved.textContent = ''; add.focus(); };
+    container.append(row);
+    add.disabled = container.children.length >= 10;
+    if (focus) row.querySelector('input').focus();
+  }
+  for (const key of ['sweets', 'gifts']) {
+    (own[key].length ? own[key] : ['']).forEach(value => addInput(key, value));
+    form.querySelector(`[data-add="${key}"]`).onclick = () => { addInput(key, '', true); saved.textContent = ''; };
+  }
+  form.oninput = () => { saved.textContent = ''; };
+  form.onsubmit = event => {
+    event.preventDefault();
+    busy(form, async () => {
+      saved.textContent = '';
+      const data = Object.fromEntries(['sweets', 'gifts'].map(key => [key, [...form.querySelectorAll(`input[name="${key}"]`)].map(input => input.value.trim()).filter(Boolean)]));
+      const controls = [...form.querySelectorAll('input, button')];
+      const disabled = controls.map(control => control.disabled);
+      controls.forEach(control => { control.disabled = true; });
+      try {
+        const result = await api('/preferences', 'PUT', data);
+        if (!page.isConnected) return;
+        Object.assign(participants.find(person => person.id === state.user.id), result);
+        renderRows();
+        saved.textContent = 'Preferencias guardadas. Ya aparecen en la tabla del grupo.';
+      } finally { controls.forEach((control, index) => { control.disabled = disabled[index]; }); }
+    });
+  };
 }
 function recipientCard(name) { return `<div class="secret-card reveal-card"><span class="card-caption">TU AMIGO SECRETO ES</span><div><span class="success-seal" aria-hidden="true">✳</span></div><h2>${escapeHtml(name)}</h2><p>Ahora viene lo mejor: pensar en su regalo.<br>Guarda el secreto hasta el gran día.</p></div>`; }
 async function reveal() {
@@ -117,6 +191,7 @@ function renderAdmin() {
   });
   document.querySelector('#refresh-users').onclick = () => refresh().catch(showPageError);
   document.querySelector('#admin-password').onclick = () => renderPassword(true);
+  addPreferencesEntry(document.querySelector('.admin-bottom'));
 }
 function openAccount(user) {
   const form = document.querySelector('#account-form'); form.reset();
@@ -137,7 +212,7 @@ document.querySelector('#account-form').onsubmit = event => {
     document.querySelector('#account-dialog').close(); form.reset(); await refresh();
   });
 };
-function showPageError(error) { const target = document.querySelector('#admin-error, #game-error'); if (target) target.textContent = error.message; }
+function showPageError(error) { const target = document.querySelector('#admin-error, #game-error, #preferences-error'); if (target) target.textContent = error.message; }
 logout.onclick = async () => { logout.disabled = true; try { await api('/logout', 'POST', {}); state = null; renderLogin(); } catch (e) { showPageError(e); } finally { logout.disabled = false; } };
 try { await refresh(); } catch (e) { renderLogin(); if (!e.message.includes('Inicia sesión') && !e.message.includes('sesión terminó')) document.querySelector('.error').textContent = e.message; }
 if (document.modelContext?.registerTool) {

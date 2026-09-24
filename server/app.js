@@ -129,6 +129,33 @@ export async function createApp(pool, { origin = 'http://localhost:3000', produc
     });
     res.json({ ok: true });
   });
+  app.use('/api/preferences', (req, res, next) => {
+    if (req.user.must_change_password) return next(fail(403, 'Cambia tu contraseña inicial para consultar o guardar preferencias.'));
+    next();
+  });
+  app.get('/api/preferences', async (req, res) => {
+    const { rows } = await pool.query(`SELECT u.id,u.name,u.username,
+      COALESCE(p.sweets,'{}'::text[]) AS sweets,COALESCE(p.gifts,'{}'::text[]) AS gifts
+      FROM users u LEFT JOIN participant_preferences p ON p.user_id=u.id
+      WHERE u.role='participant' ORDER BY LOWER(u.name),u.username,u.id`);
+    res.json({ participants: rows });
+  });
+  app.put('/api/preferences', async (req, res) => {
+    if (req.user.role !== 'participant') throw fail(403, 'Solo los participantes pueden guardar sus preferencias.');
+    const body = req.body;
+    if (!body || Array.isArray(body) || Object.keys(body).some(key => !['sweets', 'gifts'].includes(key)))
+      throw fail(400, 'Envía únicamente tus listas de dulces y regalos.');
+    const list = key => {
+      const values = body[key];
+      if (!Array.isArray(values) || values.length > 10 || values.some(value => typeof value !== 'string' || !value.trim() || value.trim().length > 120))
+        throw fail(400, 'Cada lista admite hasta 10 opciones, de 1 a 120 caracteres cada una.');
+      return values.map(value => value.trim());
+    };
+    const sweets = list('sweets'), gifts = list('gifts');
+    await pool.query(`INSERT INTO participant_preferences (user_id,sweets,gifts) VALUES ($1,$2,$3)
+      ON CONFLICT (user_id) DO UPDATE SET sweets=EXCLUDED.sweets,gifts=EXCLUDED.gifts`, [req.user.id, sweets, gifts]);
+    res.json({ sweets, gifts });
+  });
   app.post('/api/reveal', async (req, res) => {
     if (req.user.role !== 'participant') throw fail(403, 'El administrador no participa en el sorteo.');
     const { rows: [game] } = await pool.query('SELECT locked FROM game WHERE id=1');
