@@ -77,12 +77,12 @@ export async function createApp(pool, { origin = 'http://localhost:3000', produc
     next();
   });
   // Decrypts the caller's assignment with the key their session carries; the database alone cannot.
-  async function recipientOf(req) {
-    const { rows: [row] } = await pool.query('SELECT sealed FROM assignments WHERE giver_id=$1', [req.user.id]);
+  async function recipientOf(req, db = pool) {
+    const { rows: [row] } = await db.query('SELECT sealed FROM assignments WHERE giver_id=$1', [req.user.id]);
     if (!row) throw fail(409, 'No formas parte de este sorteo.');
     const recipientId = openFor(sessionUnbox(req.sessionToken, req.user.key_box), row.sealed, req.user.id);
     // Fetch every name and pick in memory, so the recipient id never travels in a query.
-    const { rows } = await pool.query("SELECT id,name FROM users WHERE role='participant'");
+    const { rows } = await db.query("SELECT id,name FROM users WHERE role='participant'");
     return rows.find(u => u.id === recipientId).name;
   }
   app.post('/api/logout', async (req, res) => {
@@ -91,17 +91,20 @@ export async function createApp(pool, { origin = 'http://localhost:3000', produc
     res.json({ ok: true });
   });
   app.get('/api/me', async (req, res) => {
-    const { rows: [game] } = await pool.query(`SELECT g.locked,
+    await transaction(pool, async db => {
+    await db.query('SELECT id FROM game WHERE id=1 FOR SHARE');
+    const { rows: [game] } = await db.query(`SELECT g.locked,g.round,
       (SELECT COUNT(*)::int FROM users WHERE role='participant') AS total,
       (SELECT COUNT(*)::int FROM users WHERE role='participant' AND NOT must_change_password AND public_key IS NOT NULL) AS ready
       FROM game g WHERE id=1`);
     const { id, username, name, role, must_change_password } = req.user;
     let recipient = null;
     if (role === 'participant' && game.locked) {
-      const { rows } = await pool.query('SELECT 1 FROM reveals WHERE user_id=$1', [id]);
-      if (rows.length) recipient = await recipientOf(req);
+      const { rows } = await db.query('SELECT 1 FROM reveals WHERE user_id=$1', [id]);
+      if (rows.length) recipient = await recipientOf(req, db);
     }
     res.json({ user: { id, username, name, role, mustChangePassword: must_change_password }, game, recipient });
+    });
   });
   app.post('/api/password', async (req, res) => {
     await limit(`password:${req.user.id}`, 10, 15);
@@ -158,10 +161,13 @@ export async function createApp(pool, { origin = 'http://localhost:3000', produc
   });
   app.post('/api/reveal', async (req, res) => {
     if (req.user.role !== 'participant') throw fail(403, 'El administrador no participa en el sorteo.');
-    const { rows: [game] } = await pool.query('SELECT locked FROM game WHERE id=1');
+    const recipient = await transaction(pool, async db => {
+    const { rows: [game] } = await db.query('SELECT locked FROM game WHERE id=1 FOR SHARE');
     if (!game.locked) throw fail(409, 'El organizador todavía no ha iniciado el sorteo.');
-    const recipient = await recipientOf(req);
-    await pool.query('INSERT INTO reveals (user_id) VALUES ($1) ON CONFLICT DO NOTHING', [req.user.id]);
+    const recipient = await recipientOf(req, db);
+    await db.query('INSERT INTO reveals (user_id) VALUES ($1) ON CONFLICT DO NOTHING', [req.user.id]);
+    return recipient;
+    });
     res.json({ recipient });
   });
   app.use('/api/admin', (req, res, next) => {
@@ -176,7 +182,7 @@ export async function createApp(pool, { origin = 'http://localhost:3000', produc
   app.post('/api/admin/draw', async (req, res) => {
     await transaction(pool, async db => {
       const { rows: [game] } = await db.query('SELECT locked FROM game WHERE id=1 FOR UPDATE');
-      if (game.locked) throw fail(409, 'El sorteo ya se hizo y es permanente.');
+      if (game.locked) throw fail(409, 'El sorteo ya se hizo. Reabre la lista antes de iniciar otro.');
       const { rows: participants } = await db.query("SELECT id,must_change_password,public_key FROM users WHERE role='participant' ORDER BY id");
       if (participants.length < 3) throw fail(409, 'Se necesitan al menos 3 participantes.');
       const waiting = participants.filter(u => u.must_change_password || !u.public_key).length;
@@ -186,6 +192,30 @@ export async function createApp(pool, { origin = 'http://localhost:3000', produc
       for (const [giver, receiver] of draw(participants.map(u => u.id)))
         await db.query('INSERT INTO assignments (giver_id,sealed) VALUES ($1,$2)', [giver, sealFor(keys[giver], receiver, giver)]);
       await db.query('UPDATE game SET locked=TRUE WHERE id=1');
+    });
+    res.json({ ok: true });
+  });
+  app.get('/api/admin/draw-history', async (req, res) => {
+    const { rows } = await pool.query(`SELECT round,archived_at,
+      jsonb_array_length(participants) AS total FROM draw_history ORDER BY round DESC`);
+    res.json({ rounds: rows });
+  });
+  app.post('/api/admin/reopen', async (req, res) => {
+    if (req.user.must_change_password) throw fail(403, 'Cambia tu contraseña inicial antes de reabrir el sorteo.');
+    await transaction(pool, async db => {
+      const { rows: [game] } = await db.query('SELECT locked,round FROM game WHERE id=1 FOR UPDATE');
+      if (!game.locked) throw fail(409, 'La lista ya está abierta.');
+      if (req.body?.round !== game.round) throw fail(409, 'El sorteo cambió. Actualiza el panel antes de reabrirlo.');
+      // One transaction archives everything before clearing only the active draw.
+      await db.query(`INSERT INTO draw_history(round,archived_by,participants,assignments,reveals,preferences)
+        SELECT $1,$2,
+        COALESCE((SELECT jsonb_agg(to_jsonb(u) ORDER BY id) FROM users u WHERE role='participant'),'[]'::jsonb),
+        COALESCE((SELECT jsonb_agg(to_jsonb(a) ORDER BY giver_id) FROM assignments a),'[]'::jsonb),
+        COALESCE((SELECT jsonb_agg(to_jsonb(r) ORDER BY user_id) FROM reveals r),'[]'::jsonb),
+        COALESCE((SELECT jsonb_agg(to_jsonb(p) ORDER BY user_id) FROM participant_preferences p),'[]'::jsonb)`, [game.round, req.user.id]);
+      await db.query('DELETE FROM assignments');
+      await db.query('DELETE FROM reveals');
+      await db.query('UPDATE game SET locked=FALSE,round=round+1 WHERE id=1');
     });
     res.json({ ok: true });
   });

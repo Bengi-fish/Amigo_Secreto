@@ -57,10 +57,14 @@ function renderGame() {
   const waiting = game.total < 3 ? 'Estamos reuniendo al grupo. Se necesitan al menos 3 participantes.'
     : game.ready < game.total ? `Estamos preparando la sorpresa: ${game.ready} de ${game.total} participantes están listos.`
     : 'Todo el grupo está listo. Esperando a que el organizador inicie el sorteo.';
-  root.innerHTML = `<section class="center-page"><div class="eyebrow">TU AMIGO SECRETO</div><h1>Hola, ${escapeHtml(user.name.split(' ')[0])}.</h1><p>${recipient ? 'Ya tienes a quién sacarle una sonrisa.' : 'Una pequeña sorpresa.<br>Una persona muy especial.'}</p><div id="secret-surface">${recipient ? recipientCard(recipient) : `<div class="secret-card"><span class="card-caption">HAY UN NOMBRE ESPERÁNDOTE</span><span class="mystery-symbol" aria-hidden="true">?</span><p>Cuando lo descubras, será tu amigo secreto.<br>Un solo sorteo. La misma persona, siempre.</p><button id="reveal" class="primary" ${drawn ? '' : 'disabled'}>Descubrir mi amigo secreto <span>✳</span></button></div>`}</div>${!drawn && !recipient ? `<div class="notice">${waiting}<br><button class="quiet" id="check-ready">Actualizar estado ↻</button></div>` : ''}<p class="error" id="game-error" role="alert"></p><p class="privacy-note">${recipient ? 'Puedes volver cuando quieras. Tu amigo secreto seguirá aquí.' : 'Tu resultado es privado y cifrado. Ni el organizador puede verlo.'}</p><button class="quiet" id="change-password">Cambiar mi contraseña</button></section>`;
+  root.innerHTML = `<section class="center-page"><div class="eyebrow">TU AMIGO SECRETO</div><h1>Hola, ${escapeHtml(user.name.split(' ')[0])}.</h1><p>${recipient ? 'Ya tienes a quién sacarle una sonrisa.' : 'Una pequeña sorpresa.<br>Una persona muy especial.'}</p><div id="secret-surface">${recipient ? recipientCard(recipient) : `<div class="secret-card"><span class="card-caption">HAY UN NOMBRE ESPERÁNDOTE</span><span class="mystery-symbol" aria-hidden="true">?</span><p>Cuando lo descubras, será tu amigo secreto.<br>Tu resultado se mantiene durante este sorteo.</p><button id="reveal" class="primary" ${drawn ? '' : 'disabled'}>Descubrir mi amigo secreto <span>✳</span></button></div>`}</div>${!drawn && !recipient ? `<div class="notice">${waiting}<br><button class="quiet" id="check-ready">Actualizar estado ↻</button></div>` : ''}<p class="error" id="game-error" role="alert"></p><p class="privacy-note">${recipient ? 'Tu resultado corresponde al sorteo actual.' : 'Tu resultado es privado y cifrado. Ni el organizador puede verlo.'}</p><button class="quiet" id="change-password">Cambiar mi contraseña</button></section>`;
   document.querySelector('#reveal')?.addEventListener('click', () => reveal().catch(() => {}));
   document.querySelector('#check-ready')?.addEventListener('click', () => refresh().catch(showPageError));
   document.querySelector('#change-password').onclick = () => renderPassword(true);
+  const update = document.createElement('button');
+  update.type = 'button'; update.className = 'quiet'; update.textContent = 'Actualizar sorteo ↻';
+  update.onclick = () => refresh().catch(showPageError);
+  document.querySelector('#change-password').before(update);
   addPreferencesEntry(document.querySelector('#change-password'));
 }
 function addPreferencesEntry(before) {
@@ -177,7 +181,7 @@ function renderAdmin() {
   root.innerHTML = `<section class="admin-page"><div class="eyebrow">PANEL DEL ORGANIZADOR</div><div class="admin-heading"><div><h1>La sorpresa empieza aquí.</h1><p>Reúne al grupo. Nosotros guardamos el secreto.</p></div><button id="add-user" class="primary" ${locked ? 'disabled' : ''}>Añadir participante <span>+</span></button></div><div class="admin-stats"><div class="stat"><span>Participantes</span><strong>${users.length}</strong></div><div class="stat"><span>Cuentas listas</span><strong>${state.game.ready} / ${users.length}</strong></div><div class="stat"><span>Sorteo</span><strong>${locked ? 'Hecho' : 'Pendiente'}</strong></div></div>${locked ? '<div class="notice">El sorteo ya se hizo. Las asignaciones quedaron fijas y cifradas: ni este panel ni la base de datos muestran quién le tocó a quién.</div>' : `<div class="notice draw-box"><span>${drawText}</span><button id="start-draw" class="primary" ${canDraw ? '' : 'disabled'}>Iniciar sorteo <span>✳</span></button></div>`}<p class="error" id="admin-error" role="alert"></p><div class="table-wrap"><table><thead><tr><th>Participante</th><th>Usuario</th><th>Cuenta</th><th>Acciones</th></tr></thead><tbody>${users.map(u => `<tr><td><span class="person-name"><span class="avatar">${escapeHtml(u.name.slice(0, 2).toUpperCase())}</span>${escapeHtml(u.name)}</span></td><td>${escapeHtml(u.username)}</td><td><span class="status-pill ${u.pending || u.relogin ? 'pending' : ''}">${status(u)}</span></td><td>${locked ? '<span class="hint">Lista cerrada</span>' : `<button class="row-action" data-edit="${u.id}">Editar</button><button class="row-action danger" data-delete="${u.id}">Quitar</button>`}</td></tr>`).join('')}</tbody></table>${users.length ? '' : '<div class="empty">Todavía no hay participantes. Añade al primero.</div>'}</div><div class="admin-bottom"><span class="hint">El administrador organiza; los participantes descubren.</span><button class="quiet" id="refresh-users">Actualizar lista ↻</button><button class="quiet" id="admin-password">Cambiar mi contraseña</button></div></section>`;
   document.querySelector('#start-draw')?.addEventListener('click', async event => {
     const button = event.currentTarget;
-    if (!confirm('¿Iniciar el sorteo ahora?\n\nEs permanente: la lista se cierra y nadie podrá repetirlo ni cambiar el resultado, ni siquiera tú.')) return;
+    if (!confirm('¿Iniciar el sorteo ahora?\n\nLa lista se cerrará y los participantes podrán consultar su resultado. Para cambiar participantes después, tendrás que archivar este sorteo y reabrir la lista.')) return;
     button.disabled = true; button.firstChild.textContent = 'Sorteando… ';
     try { await api('/admin/draw', 'POST', {}); await refresh(); } catch (e) { showPageError(e); button.disabled = false; button.firstChild.textContent = 'Iniciar sorteo '; }
   });
@@ -191,6 +195,31 @@ function renderAdmin() {
   });
   document.querySelector('#refresh-users').onclick = () => refresh().catch(showPageError);
   document.querySelector('#admin-password').onclick = () => renderPassword(true);
+  if (locked) {
+    const notice = document.querySelector('.admin-page > .notice');
+    notice.classList.add('draw-box');
+    notice.innerHTML = `<span>Sorteo ${state.game.round} en curso. Puedes archivarlo para editar la lista y preparar uno nuevo. Las preferencias y el historial se conservan.</span><button type="button" class="primary" id="reopen-draw">Reabrir sorteo</button>`;
+    notice.querySelector('button').onclick = async event => {
+      if (!confirm('¿Archivar el sorteo actual y reabrir la lista?\n\nLos resultados actuales dejarán de estar vigentes. Se conservarán en el historial cifrado, junto con los participantes y sus preferencias.\n\nPodrás agregar, quitar o restablecer cuentas. El nuevo sorteo NO se hará hasta que pulses «Iniciar sorteo».')) return;
+      const button = event.currentTarget;
+      button.disabled = true;
+      try { await api('/admin/reopen', 'POST', { round: state.game.round }); await refresh(); }
+      catch (error) { showPageError(error); button.disabled = false; }
+    };
+  }
+  const history = document.createElement('section');
+  history.className = 'notice';
+  history.innerHTML = '<h2>Historial de sorteos</h2><button type="button" class="quiet">Consultar historial</button><div class="history-content"></div>';
+  document.querySelector('.admin-bottom').before(history);
+  history.querySelector('button').onclick = async event => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const { rounds } = await api('/admin/draw-history');
+      history.querySelector('.history-content').innerHTML = rounds.length ? `<ul>${rounds.map(round => `<li>Sorteo ${round.round} · ${round.total} participantes · archivado el ${escapeHtml(new Date(round.archived_at).toLocaleString('es-CO'))}</li>`).join('')}</ul><p class="hint">Los resultados se conservan cifrados. El organizador no puede consultar las parejas.</p>` : '<p>No hay sorteos archivados.</p>';
+    } catch (error) { showPageError(error); }
+    finally { button.disabled = false; }
+  };
   addPreferencesEntry(document.querySelector('.admin-bottom'));
 }
 function openAccount(user) {
@@ -216,11 +245,12 @@ function showPageError(error) { const target = document.querySelector('#admin-er
 logout.onclick = async () => { logout.disabled = true; try { await api('/logout', 'POST', {}); state = null; renderLogin(); } catch (e) { showPageError(e); } finally { logout.disabled = false; } };
 try { await refresh(); } catch (e) { renderLogin(); if (!e.message.includes('Inicia sesión') && !e.message.includes('sesión terminó')) document.querySelector('.error').textContent = e.message; }
 if (document.modelContext?.registerTool) {
-  Promise.resolve(document.modelContext.registerTool({ name: 'reveal_my_secret_friend', title: 'Descubrir mi amigo secreto', description: 'Revela el amigo secreto del participante autenticado, una vez que el organizador inició el sorteo. El resultado es permanente.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: false }, async execute(input) {
+  Promise.resolve(document.modelContext.registerTool({ name: 'reveal_my_secret_friend', title: 'Descubrir mi amigo secreto', description: 'Revela el amigo secreto del participante autenticado, una vez que el organizador inició el sorteo. El resultado se mantiene durante el sorteo actual.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: false }, async execute(input) {
     if (!input || Object.keys(input).length) throw new Error('No se admiten parámetros.');
     if (!state || state.user.role !== 'participant' || state.user.mustChangePassword) throw new Error('Inicia sesión como participante y cambia tu contraseña inicial.');
-    if (state.recipient) return { recipient: state.recipient };
     if (revealing) throw new Error('La revelación está en curso.');
+    await refresh();
+    if (state.recipient) return { recipient: state.recipient };
     return reveal();
   } })).catch(() => {});
 }

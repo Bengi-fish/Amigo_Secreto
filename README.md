@@ -33,7 +33,15 @@ Las contraseñas se generan al azar; no hay una contraseña universal. El seed n
 4. Cada participante pulsa **Descubrir mi amigo secreto**. La animación muestra números aleatorios decorativos. El sorteo real utiliza aleatoriedad criptográfica en el servidor; no se envían nombres de otras asignaciones al navegador.
 5. Cada persona ve solo su resultado. Recargar, entrar otra vez, hacer doble clic o cambiar su contraseña conserva la asignación.
 
-Al cerrar la lista, el panel bloquea altas, bajas, nombres, usuarios y restablecimiento de contraseñas. Esto evita que el administrador cambie una cuenta para suplantar a su propietario. Los participantes pueden cambiar su propia contraseña conociendo la actual. No existe reinicio, repetición del sorteo ni recuperación administrativa después del sorteo; conserva tu contraseña.
+Al cerrar la lista, el panel bloquea altas, bajas, nombres, usuarios y restablecimiento de contraseñas. Los participantes pueden cambiar su propia contraseña conociendo la actual.
+
+### Reabrir un sorteo
+
+El organizador puede pulsar **Reabrir sorteo** y confirmar para archivar la ronda actual y desbloquear la lista. Esto no sortea automáticamente: permite agregar, quitar o restablecer cuentas antes de pulsar **Iniciar sorteo**. Todos deben tener su contraseña personal configurada para iniciar otra ronda. Los participantes dejan de ver el resultado anterior al actualizar el juego.
+
+La reapertura conserva las cuentas y preferencias actuales. En una única transacción guarda en `draw_history` una copia de los participantes, las preferencias, las revelaciones y las asignaciones cifradas; después vacía únicamente las asignaciones y revelaciones activas y avanza la ronda. El historial no depende de las cuentas actuales, por lo que quitar una cuenta después no elimina su registro anterior. El panel solo muestra fecha, ronda y cantidad de participantes, nunca las parejas ni credenciales. El historial conserva material de autenticación cifrado y hashes: no debe exponerse mediante una API ni exportarse públicamente.
+
+Restablecer una cuenta después de reabrir genera llaves nuevas cuando la persona cambia su contraseña inicial. Esto permite participar en la nueva ronda; no recupera su resultado anterior si olvidó su contraseña y ya no tiene una sesión válida.
 
 ## Desplegar en Railway
 
@@ -96,7 +104,7 @@ dev.cmd test
 dev.cmd build
 ```
 
-O `pnpm test` y `pnpm build` si tienes Node en el `PATH`. Las doce pruebas pasan en esta carpeta (Node 24.21.0). Para revisar la interfaz sin tocar la base local, `node scripts/preview-test.js` levanta una copia desechable en memoria en http://127.0.0.1:3001.
+O `pnpm test` y `pnpm build` si tienes Node en el `PATH`. Las pruebas incluyen preferencias y reapertura con conservación del historial, permisos, doble clic concurrente y nuevas rondas. Para revisar la interfaz sin tocar la base local, `node scripts/preview-test.js` levanta una copia desechable en memoria en http://127.0.0.1:3001.
 
 Las pruebas usan PostgreSQL embebido aislado (PGlite), sin modificar datos locales ni producción: autenticación, inyección SQL, origen, permisos, cambio de contraseña, revocación de sesiones, altas/bajas/edición, sorteo iniciado solo por el administrador y una sola vez, unicidad, cifrado (la contraseña inicial y lo guardado en la base no descifran nada), cuentas antiguas sin llave, bloqueo de modificaciones en API y base de datos, límite de intentos y cierre de sesión. La integración con las instancias reales de Vercel/Railway debe comprobarse después del despliegue.
 

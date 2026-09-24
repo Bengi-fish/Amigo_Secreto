@@ -3,6 +3,17 @@ CREATE TABLE IF NOT EXISTS game (
   locked BOOLEAN NOT NULL DEFAULT FALSE
 );
 INSERT INTO game (id) VALUES (1) ON CONFLICT DO NOTHING;
+ALTER TABLE game ADD COLUMN IF NOT EXISTS round INTEGER NOT NULL DEFAULT 1;
+-- Snapshots have no foreign keys: later roster edits cannot erase an earlier draw.
+CREATE TABLE IF NOT EXISTS draw_history (
+  round INTEGER PRIMARY KEY,
+  archived_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  archived_by UUID NOT NULL,
+  participants JSONB NOT NULL,
+  assignments JSONB NOT NULL,
+  reveals JSONB NOT NULL,
+  preferences JSONB NOT NULL
+);
 CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY,
   username TEXT UNIQUE NOT NULL,
@@ -54,12 +65,24 @@ CREATE TABLE IF NOT EXISTS rate_limits (
 );
 CREATE OR REPLACE FUNCTION immutable_assignments() RETURNS TRIGGER AS $$
 BEGIN
+  IF TG_OP = 'DELETE' AND EXISTS (
+    SELECT 1 FROM draw_history h JOIN game g ON h.round=g.round WHERE g.id=1
+      AND h.assignments = COALESCE((SELECT jsonb_agg(to_jsonb(a) ORDER BY giver_id) FROM assignments a), '[]'::jsonb)
+  ) THEN RETURN NULL; END IF;
   RAISE EXCEPTION 'Las asignaciones son permanentes';
 END;
 $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS assignments_immutable ON assignments;
 CREATE TRIGGER assignments_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON assignments
 FOR EACH STATEMENT EXECUTE FUNCTION immutable_assignments();
+CREATE OR REPLACE FUNCTION immutable_draw_history() RETURNS TRIGGER AS $$
+BEGIN
+  RAISE EXCEPTION 'El historial de sorteos no se puede modificar';
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS draw_history_immutable ON draw_history;
+CREATE TRIGGER draw_history_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON draw_history
+FOR EACH STATEMENT EXECUTE FUNCTION immutable_draw_history();
 CREATE OR REPLACE FUNCTION protect_roster() RETURNS TRIGGER AS $$
 DECLARE is_locked BOOLEAN;
 BEGIN
@@ -80,7 +103,14 @@ FOR EACH ROW EXECUTE FUNCTION protect_roster();
 CREATE OR REPLACE FUNCTION protect_game() RETURNS TRIGGER AS $$
 BEGIN
   IF TG_OP = 'DELETE' THEN RAISE EXCEPTION 'El juego no se puede eliminar'; END IF;
-  IF OLD.locked AND NOT NEW.locked THEN RAISE EXCEPTION 'El sorteo es permanente'; END IF;
+  IF (OLD.locked AND NOT NEW.locked) OR NEW.round IS DISTINCT FROM OLD.round THEN
+    IF NOT (OLD.locked AND NOT NEW.locked AND NEW.round=OLD.round+1
+      AND EXISTS (SELECT 1 FROM draw_history WHERE round=OLD.round)
+      AND NOT EXISTS (SELECT 1 FROM assignments)
+      AND NOT EXISTS (SELECT 1 FROM reveals)) THEN
+      RAISE EXCEPTION 'Archiva el sorteo antes de reabrir la lista';
+    END IF;
+  END IF;
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;

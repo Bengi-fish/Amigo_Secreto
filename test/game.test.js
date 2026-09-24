@@ -196,6 +196,52 @@ test('preferences enforce ownership, authentication, origin and input limits', a
   assert.deepEqual(other.sweets, []); assert.deepEqual(other.gifts, []);
 });
 
+test('reopening archives the complete draw, keeps preferences and supports another round', async () => {
+  const cookie = sessions.admin;
+  const assignments = (await pool.query('SELECT * FROM assignments ORDER BY giver_id')).rows;
+  const participants = (await pool.query("SELECT * FROM users WHERE role='participant' ORDER BY id")).rows;
+  const preferences = (await pool.query('SELECT * FROM participant_preferences ORDER BY user_id')).rows;
+  assert.equal((await request('/admin/reopen', { method: 'POST', cookie: sessions.persona2, data: { round: 1 } })).status, 403);
+  assert.equal((await request('/admin/draw-history', { cookie: sessions.persona2 })).status, 403);
+  assert.equal((await request('/admin/reopen', { method: 'POST', cookie, data: { round: 0 } })).status, 409);
+  assert.equal((await request('/admin/reopen', { method: 'POST', cookie, source: 'https://evil.example', data: { round: 1 } })).status, 403);
+  // Concurrent clicks archive once; reveal requests cannot race across the reset.
+  const results = await Promise.all([1, 2].map(() => request('/admin/reopen', { method: 'POST', cookie, data: { round: 1 } })));
+  assert.deepEqual(results.map(r => r.status).sort(), [200, 409]);
+  assert.deepEqual((await pool.query('SELECT * FROM participant_preferences ORDER BY user_id')).rows, preferences);
+  assert.deepEqual((await pool.query("SELECT * FROM users WHERE role='participant' ORDER BY id")).rows, participants);
+  const archive = (await pool.query('SELECT * FROM draw_history WHERE round=1')).rows[0];
+  assert.deepEqual(archive.assignments, assignments);
+  assert.equal(archive.participants.length, 6);
+  assert.equal(archive.reveals.length, 6);
+  assert.deepEqual(archive.preferences, preferences);
+  const history = await request('/admin/draw-history', { cookie });
+  assert.deepEqual(Object.keys(history.data.rounds[0]).sort(), ['archived_at', 'round', 'total']);
+  await assert.rejects(pool.query('DELETE FROM draw_history'));
+  await assert.rejects(pool.query('UPDATE draw_history SET round=2'));
+  const me = await request('/me', { cookie: sessions.persona1 });
+  assert.equal(me.data.recipient, null); assert.equal(me.data.game.locked, false); assert.equal(me.data.game.round, 2);
+  assert.equal((await request('/reveal', { method: 'POST', cookie: sessions.persona1, data: {} })).status, 409);
+  assert.equal((await request(`/admin/users/${ids[5]}`, { method: 'PATCH', cookie, data: { name: 'Persona 5', username: 'persona5', password: initial } })).status, 200);
+  assert.equal((await request('/admin/draw', { method: 'POST', cookie, data: {} })).status, 409);
+  const login = await request('/login', { method: 'POST', data: { username: 'persona5', password: initial } });
+  const changed = await request('/password', { method: 'POST', cookie: login.cookie, data: { currentPassword: initial, newPassword: personal } });
+  assert.equal(changed.status, 200); sessions.persona5 = changed.cookie;
+  assert.equal((await request(`/admin/users/${ids[6]}`, { method: 'DELETE', cookie, data: {} })).status, 200);
+  assert.equal((await request('/admin/users', { method: 'POST', cookie, data: { name: 'Nueva persona', username: 'nueva', password: initial } })).status, 201);
+  const added = await request('/login', { method: 'POST', data: { username: 'nueva', password: initial } });
+  assert.equal((await request('/password', { method: 'POST', cookie: added.cookie, data: { currentPassword: initial, newPassword: personal } })).status, 200);
+  assert.equal((await request('/admin/draw', { method: 'POST', cookie, data: {} })).status, 200);
+  assert.equal((await request('/me', { cookie: sessions.persona1 })).data.recipient, null);
+  assert.equal((await request('/admin/reopen', { method: 'POST', cookie, data: { round: 1 } })).status, 409);
+  await assert.rejects(pool.query('DELETE FROM assignments'));
+  await migrate(pool);
+  assert.deepEqual((await pool.query('SELECT * FROM draw_history WHERE round=1')).rows[0], archive);
+  assert.equal((await request('/reveal', { method: 'POST', cookie: sessions.persona1, data: {} })).status, 200);
+  assert.equal((await request('/admin/reopen', { method: 'POST', cookie, data: { round: 2 } })).status, 200);
+  assert.equal((await request('/admin/draw-history', { cookie })).data.rounds.length, 2);
+});
+
 test('login throttling and logout', async () => {
   let response;
   for (let i = 0; i < 11; i++) response = await request('/login', { method: 'POST', data: { username: 'nonexistent', password: 'wrong' } });
